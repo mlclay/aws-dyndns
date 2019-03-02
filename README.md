@@ -62,6 +62,11 @@ aws configure
 ./aws-dyndns test.example.com 5 Z148QEXAMPLE8V 30
 ```
 
+- You can also update multiple entries in the same hosted zone that all need to resolve to the same IP; here is an example:
+```bash
+./aws-dyndns test.example.com,another.example.com 5 Z148QEXAMPLE8V 30
+```
+
 You should ensure that this script runs all the time. The easiest way would be to add the following to your ```/etc/rc.local``` file, which will start the script in background on system boot:
 ```bash
 /usr/bin/sudo -u $YOUR_USER \

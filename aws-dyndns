@@ -15,7 +15,7 @@ function validate_ip() {
 
 [ "$#" -eq 4 ] || usage
 
-DNS_FQDN="$1"; shift
+DNS_FQDNS="$1"; shift
 DNS_TTL="$1"; shift
 AWS_ZONE_ID="$1"; shift
 REFRESH_TIME="$1"; shift
@@ -27,8 +27,10 @@ while [ 1 ] ; do
 	sleep "${TS}s"
 	TS="$REFRESH_TIME" # first run is without a sleep
 
-	OLD_IP="$(dig +short "$DNS_FQDN")"
-	NEW_IP="$(curl -sS --max-time 5 https://api.ipify.org)"
+	IFS=',' read -ra FQDNS <<< "$DNS_FQDNS"
+
+	OLD_IP="$(dig +short "${FQDNS[0]}")"
+	NEW_IP="$(curl -sS --max-time 5 https://ifconfig.co)"
 
 	if ! validate_ip "$OLD_IP" ; then
 		echo "Invalid OLD_IP: $OLD_IP"
@@ -45,30 +47,45 @@ while [ 1 ] ; do
 	fi
 
 	# UPSERT: http://docs.aws.amazon.com/Route53/latest/APIReference/API_ChangeResourceRecordSets.html
-
+	CHANGE_SET=''
+	ADD_COMMA=0
+	
+	for fqdn in "${FQDNS[@]}"; do
+		echo "Processing $fqdn"
+		
+		if [ "$ADD_COMMA" == 1 ]; then
+			CHANGE_SET="${CHANGE_SET},"
+		fi
+		ADD_COMMA=1
+		
+		read -r -d '' CHANGE << EOF
+		{
+			"Action": "UPSERT",
+			"ResourceRecordSet": {
+				"Name": "$fqdn.",
+				"Type": "A",
+				"TTL": $DNS_TTL,
+				"ResourceRecords": [
+					{
+						"Value": "$NEW_IP"
+					}
+				]
+			}
+		}
+EOF
+		CHANGE_SET="${CHANGE_SET}${CHANGE}"
+		
+	done
+	
 	# http://stackoverflow.com/questions/1167746/how-to-assign-a-heredoc-value-to-a-variable-in-bash
 	read -r -d '' JSON_CMD << EOF
 	{
 		"Comment": "DynDNS update",
-		"Changes": [
-			{
-				"Action": "UPSERT",
-				"ResourceRecordSet": {
-					"Name": "$DNS_FQDN.",
-					"Type": "A",
-					"TTL": $DNS_TTL,
-					"ResourceRecords": [
-						{
-							"Value": "$NEW_IP"
-						}
-					]
-				}
-			}
-		]
+		"Changes": [$CHANGE_SET]
 	}
 EOF
 
-	echo "Updating IP to: $NEW_IP ($DNS_FQDN); OLD=$OLD_IP"
+	echo "Updating IP to: $NEW_IP (${FQDNS[@]}); OLD=$OLD_IP"
 
 	aws route53 change-resource-record-sets \
 		--hosted-zone-id "$AWS_ZONE_ID" --change-batch "$JSON_CMD"
@@ -77,5 +94,6 @@ EOF
 	# We update at most every 30 seconds.
 	# Enough time for the AWS Route 53 changes to propagate.
 
-	echo "Done. Request sent to update IP to: $NEW_IP ($DNS_FQDN)"
+	echo "Done. Request sent to update IP to: $NEW_IP (${FQDNS[@]})"
 done
+
